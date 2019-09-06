@@ -1,13 +1,11 @@
 
 require 'curses'
 
-# HEIGHT = 60
-# WIDTH = 200
-
-HEIGHT = 20
-WIDTH = 40
+HEIGHT = 30
+WIDTH = 50
 ENERGY = 100
-N_LIFE = 10
+LIFESPAN = 200
+N_LIFE = 40
 
 class Ground 
   def color
@@ -23,7 +21,7 @@ class Water
     2
   end
   def str
-    '}'
+    '*'
   end
 end
 
@@ -33,6 +31,7 @@ class Life
     @prop = 4.times.map { rand < 0.5 ? 0 : 1 }
     @pos = { y: rand(HEIGHT), x: rand(WIDTH) }
     @energy= rand(ENERGY)
+    @lifespan= rand(LIFESPAN)
   end
 
   def icon
@@ -43,15 +42,11 @@ class Life
     return true if @prop[3] == 1
     dist = pos[direction] + dx
     if direction == :x
-      return false if dist >= WIDTH || dist < 0
-      if world[pos[:y]][pos[:x] + dx].class == Water
-        return false
-      end
+      return false if (dist >= WIDTH || dist < 0)
+      return false if world[pos[:y]][dist].class == Water
     else
-      return false if dist >= HEIGHT || dist < 0
-      if world[pos[:y]+dx][pos[:x]].class == Water
-        return false
-      end
+      return false if (dist >= HEIGHT || dist < 0)
+      return false if world[dist][pos[:x]].class == Water
     end
     true
   end
@@ -59,61 +54,59 @@ class Life
   def eat(life)
     @energy += life.energy
     life.energy = 0
+    life.lifespan = 0
   end
 
-  def replicate(life, lifes)
+  def replicate(life, lifes, world)
     nlife = Life.new
     nlife.prop = @prop
-    nlife.pos = @pos.dup
-    nlife.move(nil)
-    lifes << nlife
+    nlife.pos = Marshal.load(Marshal.dump(@pos))
+    nlife.move(world, force: true)
+
+    duplicate_location = false
+    lifes.each do |olife|
+      duplicate_location = (olife.pos[:x] == nlife.pos[:x] && olife.pos[:y] == nlife.pos[:y])
+      break if duplicate_location
+    end
+    lifes << nlife unless duplicate_location
   end
 
   def dead?
-    return (@energy <= 0)
+    return (@lifespan <= 0 || @energy <= 0)
   end
 
-  def event(lifes)
-    @energy -= 1
-    if @prop[1] == 1 # unisex
-      self.replicate(self, lifes) if @energy >= 90
-    else
-      lifes.each do |life| 
-        next if life == self
-        next if life.dead?
-
-        if life.pos[:y] == @pos[:y] && life.pos[:x] == @pos[:x]
-          if life.icon == self.icon
-            self.replicate(life, lifes)
-          else
-            self.eat(life) if @prop[2] == 0 # pradator
-          end
-        end
-      end
-    end
+  def event(lifes, world)
+    @lifespan -= 1
+    @energy -= 0.2
 
     if @prop[2] == 1 # kougousei
-      @energy += 3
+      @energy += 1
+    end
+
+    if @prop[1] == 1 # unisex
+      self.replicate(self, lifes, world) if @energy >= 110
+    end
+
+    lifes.each do |life| 
+      next if life == self
+      next if life.dead?
+
+      if life.pos[:y] == @pos[:y] && life.pos[:x] == @pos[:x]
+        if life.icon == self.icon
+          if @prop[1] == 0
+            self.replicate(life, lifes, world)
+          end
+        else
+          self.eat(life) if @prop[2] == 0 # pradator
+        end
+        break
+      end
     end
   end
 
-  def move(world)
+  def move(world, force: false)
     dx = rand(2)
-
-    if world.nil?
-      if (rand > 0.5)
-        direction = :y
-      else
-        direction = :x
-      end
-      if (rand > 0.5)
-        dx *= -1
-      end
-      @pos[direction] += dx
-      return
-    end
-
-    if @prop[0] == 1
+    if @prop[0] == 1 || force
       if (rand > 0.5)
         direction = :y
       else
@@ -123,20 +116,21 @@ class Life
         dx *= -1
       end
       @pos[direction] += dx if can_move?(world, pos, direction, dx)
-      @energy -= 1
+      @energy -= 0.2
       if @prop[3] == 1
-        @energy -= 1
+        @energy -= 0.2
       end
     end
   end
 end
 
 world = HEIGHT.times.map { 
-  WIDTH.times.map { rand > 0.7 ? Water.new : Ground.new }
+  # WIDTH.times.map { rand > 0.5 ? Water.new : Ground.new }
+  WIDTH.times.map { Ground.new }
 }
 
 lifes = N_LIFE.times.map { Life.new }
-lifes.each {|i| pp i}
+# lifes.each {|i| pp i}
 
 world.each do |line|
   line.sort! do |a, b|
@@ -147,31 +141,29 @@ end
 # pp world
 # exit
 
-Curses.init_pair(1, Curses::COLOR_BLACK, Curses::COLOR_WHITE)
-Curses.init_pair(2, Curses::COLOR_BLACK, Curses::COLOR_BLUE)
 Curses.init_screen
 begin
   while true do
     world.each.with_index do |line, y|
       line.each.with_index do |e, x|
         Curses.setpos(y, x)
-        Curses.attrset(Curses.color_pair(e.color))
         Curses.addstr(e.str)
-        Curses.refresh
+        # Curses.refresh
       end
     end
 
     lifes.each do |life|
       Curses.setpos(life.pos[:y], life.pos[:x])
       Curses.addstr(life.icon)
-      Curses.refresh
       life.move(world)
-      life.event(lifes)
+      life.event(lifes, world)
+      # Curses.refresh
     end
 
     lifes.delete_if {|life| life.dead? }
+    Curses.refresh
 
-    sleep 1
+    sleep 0.1
   end
 ensure
   Curses.close_screen
